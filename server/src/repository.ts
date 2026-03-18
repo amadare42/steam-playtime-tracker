@@ -11,6 +11,7 @@ interface GameTimeframe {
     id: number;
     player_id: number;
     app_id: number;
+    app_name: string;
     playtime_total_minutes: number;
     playtime_delta_minutes: number;
     playtime_deck_total_minutes: number;
@@ -18,6 +19,7 @@ interface GameTimeframe {
     playtime_win_total_minutes: number;
     playtime_win_delta_minutes: number;
     created_at: string;
+    updated_at: string;
 }
 
 export type BreakdownBucket = 'hour' | 'day' | 'week';
@@ -122,8 +124,9 @@ export class Repository {
                 playtime_deck_total_minutes,
                 playtime_deck_delta_minutes,
                 playtime_win_total_minutes,
-                playtime_win_delta_minutes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                playtime_win_delta_minutes,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         `);
 
         const result = insertQuery.run(
@@ -145,6 +148,11 @@ export class Repository {
         return inserted as GameTimeframe;
     }
 
+    public touchGameTimeframe(id: number): void {
+        this.db.prepare("UPDATE game_playtime_frame SET updated_at = datetime('now') WHERE id = ?")
+            .run(id);
+    }
+
     public getPlaytimeBreakdown(player_id: number, bucket: BreakdownBucket): PlaytimeBreakdownRow[] {
         const bucketExpressionByType: Record<BreakdownBucket, string> = {
             hour: "strftime('%Y-%m-%d %H:00:00', created_at)",
@@ -162,7 +170,7 @@ export class Repository {
             FROM game_playtime_frame
             WHERE player_id = ?
             GROUP BY bucket_start
-            ORDER BY bucket_start ASC
+            ORDER BY bucket_start DESC
         `;
 
         const rows = this.db.prepare(query).all(player_id);
@@ -188,7 +196,7 @@ export class Repository {
             FROM game_playtime_frame
             WHERE player_id = ?
             GROUP BY app_id, app_name, bucket_start
-            ORDER BY app_name ASC, bucket_start ASC
+            ORDER BY app_name ASC, bucket_start DESC
         `;
 
         const rows = this.db.prepare(query).all(player_id);
@@ -218,7 +226,7 @@ export class Repository {
             FROM game_playtime_frame
             WHERE player_id = ?
             GROUP BY app_id, app_name, frame_from, frame_to
-            ORDER BY app_name ASC, frame_from ASC
+            ORDER BY app_name ASC, frame_from DESC
         `;
 
         const rows = this.db.prepare(query).all(player_id);

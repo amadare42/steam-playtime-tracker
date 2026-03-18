@@ -25,6 +25,8 @@ type PlaytimeBreakdownByGameResult = {
             from: string;
             to: string;
             minutes: number;
+            day_total_minutes?: number;
+            week_total_minutes?: number;
         }>;
     }>;
 };
@@ -72,6 +74,16 @@ export class Service {
             const playtimeDeckTotalMinutes = game.playtime_deck_forever ?? 0;
             const playtimeWinTotalMinutes = game.playtime_windows_forever ?? 0;
 
+            if (
+                latest
+                && latest.playtime_total_minutes === playtimeTotalMinutes
+                && latest.playtime_deck_total_minutes === playtimeDeckTotalMinutes
+                && latest.playtime_win_total_minutes === playtimeWinTotalMinutes
+            ) {
+                this.repository.touchGameTimeframe(latest.id);
+                continue;
+            }
+
             // If this is the first snapshot for the game, deltas equal totals from a zero baseline.
             this.repository.addGameTimeframe({
                 player_id: user.id,
@@ -114,12 +126,15 @@ export class Service {
         }
 
         if (group === 'game') {
-            const frameRows = this.repository.getPlaytimeFramesByGame(user.id, bucket);
+            const frameRows = this.repository
+                .getPlaytimeFramesByGame(user.id, bucket)
+                .filter((row) => this.hasFrameMinutes(row));
+
             return {
                 username,
                 bucket,
                 group,
-                series: this.groupFramesByGame(frameRows),
+                series: this.groupFramesByGame(bucket, frameRows),
             };
         }
 
@@ -127,12 +142,26 @@ export class Service {
             username,
             bucket,
             group,
-            series: this.repository.getPlaytimeBreakdown(user.id, bucket),
+            series: this.repository
+                .getPlaytimeBreakdown(user.id, bucket)
+                .filter((row) => this.hasBreakdownMinutes(row)),
         };
     }
 
-    private groupFramesByGame(frameRows: PlaytimeGameFrameRow[]): PlaytimeBreakdownByGameResult['series'] {
+    private hasBreakdownMinutes(row: PlaytimeBreakdownRow): boolean {
+        return row.total_minutes > 0 || row.deck_minutes > 0 || row.windows_minutes > 0;
+    }
+
+    private hasFrameMinutes(row: Pick<PlaytimeGameFrameRow, 'minutes'>): boolean {
+        return row.minutes > 0;
+    }
+
+    private groupFramesByGame(
+        bucket: BreakdownBucket,
+        frameRows: PlaytimeGameFrameRow[],
+    ): PlaytimeBreakdownByGameResult['series'] {
         const grouped = new Map<number, PlaytimeBreakdownByGameResult['series'][number]>();
+        const periodTotalsByGame = this.getPeriodTotalsByGame(bucket, frameRows);
 
         for (const row of frameRows) {
             if (!grouped.has(row.app_id)) {
@@ -143,13 +172,88 @@ export class Service {
                 });
             }
 
+            const periodKey = this.getPeriodKey(bucket, row.frame_from);
+            const periodTotal = periodKey
+                ? periodTotalsByGame.get(row.app_id)?.get(periodKey)
+                : undefined;
+
+            const periodTotalField = bucket === 'hour'
+                ? { day_total_minutes: periodTotal }
+                : bucket === 'day'
+                    ? { week_total_minutes: periodTotal }
+                    : {};
+
             grouped.get(row.app_id)!.frames.push({
                 from: row.frame_from,
                 to: row.frame_to,
                 minutes: row.minutes,
+                ...periodTotalField,
             });
         }
 
         return Array.from(grouped.values());
+    }
+
+    private getPeriodTotalsByGame(
+        bucket: BreakdownBucket,
+        frameRows: PlaytimeGameFrameRow[],
+    ): Map<number, Map<string, number>> {
+        const totalsByGame = new Map<number, Map<string, number>>();
+
+        if (bucket === 'week') {
+            return totalsByGame;
+        }
+
+        for (const row of frameRows) {
+            const periodKey = this.getPeriodKey(bucket, row.frame_from);
+            if (!periodKey) {
+                continue;
+            }
+
+            if (!totalsByGame.has(row.app_id)) {
+                totalsByGame.set(row.app_id, new Map<string, number>());
+            }
+
+            const gameTotals = totalsByGame.get(row.app_id)!;
+            gameTotals.set(periodKey, (gameTotals.get(periodKey) ?? 0) + row.minutes);
+        }
+
+        return totalsByGame;
+    }
+
+    private getPeriodKey(bucket: BreakdownBucket, frameFrom: string): string | null {
+        if (bucket === 'hour') {
+            return frameFrom.slice(0, 10);
+        }
+
+        if (bucket === 'day') {
+            const date = this.toDate(frameFrom);
+            if (!date) {
+                return null;
+            }
+
+            const dayOffset = (date.getDay() + 6) % 7;
+            date.setDate(date.getDate() - dayOffset);
+            return this.toDateKey(date);
+        }
+
+        return null;
+    }
+
+    private toDate(value: string): Date | null {
+        const parsed = new Date(value.replace(' ', 'T'));
+        if (Number.isNaN(parsed.getTime())) {
+            return null;
+        }
+
+        parsed.setHours(0, 0, 0, 0);
+        return parsed;
+    }
+
+    private toDateKey(date: Date): string {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
     }
 }

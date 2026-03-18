@@ -8,12 +8,24 @@ type GameFrame = {
   from: string
   to: string
   minutes: number
+  day_total_minutes?: number
+  week_total_minutes?: number
 }
 
 type GameBreakdown = {
   app_id: number
   name: string
   frames: GameFrame[]
+}
+
+type FrameGroup = {
+  key: string
+  title: string
+  frames: GameFrame[]
+}
+
+type GroupedGameBreakdown = GameBreakdown & {
+  frameGroups: FrameGroup[]
 }
 
 type RequestHistoryEntry = {
@@ -33,6 +45,7 @@ const BUCKET_MAX_MINUTES: Record<Bucket, number> = {
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim()
 const REQUEST_HISTORY_STORAGE_KEY = 'steam-playtime.request-history'
 const REQUEST_HISTORY_LIMIT = 20
+const BREAKDOWN_PAGE_SIZE = 50
 
 function toApiUrl(path: string) {
   return `${API_BASE_URL}${path}`
@@ -141,6 +154,125 @@ function formatFrameRange(bucket: Bucket, frame: GameFrame): string {
   })}`
 }
 
+function toLocalDateKey(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function getStartOfWeekMonday(date: Date): Date {
+  const start = new Date(date)
+  const dayOffset = (start.getDay() + 6) % 7
+  start.setHours(0, 0, 0, 0)
+  start.setDate(start.getDate() - dayOffset)
+  return start
+}
+
+function formatFrameGroupTitle(bucket: Bucket, frame: GameFrame): string {
+  const from = toDate(frame.from)
+  if (Number.isNaN(from.getTime())) {
+    return formatFrameRange(bucket, frame)
+  }
+
+  if (bucket === 'hour') {
+    return from.toLocaleDateString([], {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    })
+  }
+
+  const weekStart = getStartOfWeekMonday(from)
+  const weekEnd = new Date(weekStart)
+  weekEnd.setDate(weekEnd.getDate() + 6)
+  return `Week of ${weekStart.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+  })} - ${weekEnd.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })}`
+}
+
+function getFrameGroupKey(bucket: Bucket, frame: GameFrame): string {
+  const from = toDate(frame.from)
+  if (Number.isNaN(from.getTime())) {
+    return toFrameKey(frame)
+  }
+
+  if (bucket === 'hour') {
+    return toLocalDateKey(from)
+  }
+
+  return toLocalDateKey(getStartOfWeekMonday(from))
+}
+
+function formatFrameItemLabel(bucket: Bucket, frame: GameFrame): string {
+  const from = toDate(frame.from)
+  if (Number.isNaN(from.getTime())) {
+    return formatFrameRange(bucket, frame)
+  }
+
+  if (bucket === 'hour') {
+    return from.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+
+  if (bucket === 'day') {
+    return from.toLocaleDateString([], {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    })
+  }
+
+  return formatFrameRange(bucket, frame)
+}
+
+function formatMinutes(minutes: number): string {
+  if (minutes <= 0) {
+    return '0m'
+  }
+
+  const hours = Math.floor(minutes / 60)
+  const remainder = minutes % 60
+
+  if (hours === 0) {
+    return `${remainder}m`
+  }
+
+  if (remainder === 0) {
+    return `${hours}h`
+  }
+
+  return `${hours}h ${remainder}m`
+}
+
+function getFramePeriodTotal(bucket: Bucket, frame: GameFrame): { label: string; shortLabel: string; total: number } | null {
+  if (bucket === 'hour' && typeof frame.day_total_minutes === 'number') {
+    return {
+      label: 'Day total',
+      shortLabel: 'day',
+      total: frame.day_total_minutes,
+    }
+  }
+
+  if (bucket === 'day' && typeof frame.week_total_minutes === 'number') {
+    return {
+      label: 'Week total',
+      shortLabel: 'week',
+      total: frame.week_total_minutes,
+    }
+  }
+
+  return null
+}
+
 async function apiRequest<T>(path: string): Promise<T> {
   const response = await fetch(toApiUrl(path))
   const payload = await response.json().catch(() => null)
@@ -168,6 +300,7 @@ function App() {
   const [isRestoringLatest, setIsRestoringLatest] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
+  const [visibleEntryCount, setVisibleEntryCount] = useState(BREAKDOWN_PAGE_SIZE)
 
   const sortedGames = useMemo(() => {
     return [...games].sort((a, b) => {
@@ -204,6 +337,105 @@ function App() {
     const matchedFrames = game.frames.filter((frame) => toFrameKey(frame) === selectedFrameKey)
     return matchedFrames.length ? [{ ...game, frames: matchedFrames }] : []
   }, [selectedGameId, selectedFrameKey, sortedGames])
+
+  const groupedGames = useMemo<GroupedGameBreakdown[]>(() => {
+    if (bucket === 'week') {
+      return filteredGames.map((game) => ({
+        ...game,
+        frameGroups: [{ key: 'all-weeks', title: '', frames: game.frames }],
+      }))
+    }
+
+    return filteredGames.map((game) => {
+      const frameGroupsByKey = new Map<string, FrameGroup>()
+
+      for (const frame of game.frames) {
+        const groupKey = getFrameGroupKey(bucket, frame)
+        if (!frameGroupsByKey.has(groupKey)) {
+          frameGroupsByKey.set(groupKey, {
+            key: groupKey,
+            title: formatFrameGroupTitle(bucket, frame),
+            frames: [],
+          })
+        }
+
+        frameGroupsByKey.get(groupKey)!.frames.push(frame)
+      }
+
+      return {
+        ...game,
+        frameGroups: Array.from(frameGroupsByKey.values()),
+      }
+    })
+  }, [bucket, filteredGames])
+
+  const totalBreakdownEntries = useMemo(() => {
+    return groupedGames.reduce((entrySum, game) => {
+      return entrySum + game.frameGroups.reduce((groupSum, group) => groupSum + group.frames.length, 0)
+    }, 0)
+  }, [groupedGames])
+
+  const totalBreakdownMinutes = useMemo(() => {
+    return groupedGames.reduce((sum, game) => {
+      return sum + game.frames.reduce((gameSum, frame) => gameSum + frame.minutes, 0)
+    }, 0)
+  }, [groupedGames])
+
+  useEffect(() => {
+    setVisibleEntryCount(BREAKDOWN_PAGE_SIZE)
+  }, [games, bucket, selectedGameId, selectedFrameKey])
+
+  const paginatedGroupedGames = useMemo<GroupedGameBreakdown[]>(() => {
+    let remaining = Math.max(0, visibleEntryCount)
+    if (remaining === 0) {
+      return []
+    }
+
+    const paginated: GroupedGameBreakdown[] = []
+
+    for (const game of groupedGames) {
+      if (remaining <= 0) {
+        break
+      }
+
+      const paginatedGroups: FrameGroup[] = []
+
+      for (const group of game.frameGroups) {
+        if (remaining <= 0) {
+          break
+        }
+
+        const visibleFrames = group.frames.slice(0, remaining)
+        if (!visibleFrames.length) {
+          continue
+        }
+
+        paginatedGroups.push({
+          ...group,
+          frames: visibleFrames,
+        })
+
+        remaining -= visibleFrames.length
+      }
+
+      if (paginatedGroups.length) {
+        paginated.push({
+          ...game,
+          frameGroups: paginatedGroups,
+        })
+      }
+    }
+
+    return paginated
+  }, [groupedGames, visibleEntryCount])
+
+  const visibleBreakdownEntries = useMemo(() => {
+    return paginatedGroupedGames.reduce((entrySum, game) => {
+      return entrySum + game.frameGroups.reduce((groupSum, group) => groupSum + group.frames.length, 0)
+    }, 0)
+  }, [paginatedGroupedGames])
+
+  const remainingBreakdownEntries = Math.max(0, totalBreakdownEntries - visibleBreakdownEntries)
 
   const suggestedUsernames = useMemo(() => {
     const uniqueNames = new Set<string>()
@@ -423,6 +655,10 @@ function App() {
     })
   }
 
+  function onLoadMoreEntries() {
+    setVisibleEntryCount((current) => Math.min(current + BREAKDOWN_PAGE_SIZE, totalBreakdownEntries))
+  }
+
   return (
     <main className="dashboard">
       <section className="panel controls">
@@ -536,38 +772,71 @@ function App() {
       <section className="panel results">
         <div className="results-header">
           <h2>Breakdown by game</h2>
-          <span className="bucket-cap">Frame max: {bucketMax} minutes</span>
+          <div className="results-meta">
+            <span className="bucket-cap">Frame max: {formatMinutes(bucketMax)}</span>
+            <span className="total-cap">Total: {formatMinutes(totalBreakdownMinutes)}</span>
+          </div>
         </div>
 
-        {!filteredGames.length ? (
+        {!paginatedGroupedGames.length ? (
           <p className="empty">Load a user breakdown to view game frames.</p>
         ) : (
           <div className="game-list">
-            {filteredGames.map((game) => (
+            {paginatedGroupedGames.map((game) => (
               <article key={game.app_id} className="game-card">
                 <header>
                   <h3>{game.name}</h3>
-                  <span>{game.frames.reduce((sum, frame) => sum + frame.minutes, 0)} min total</span>
+                  <span>{formatMinutes(game.frames.reduce((sum, frame) => sum + frame.minutes, 0))} total</span>
                 </header>
 
-                <ul>
-                  {game.frames.map((frame, index) => {
-                    const width = Math.min(100, (frame.minutes / bucketMax) * 100)
-                    return (
-                      <li key={`${game.app_id}-${frame.from}-${index}`}>
-                        <div className="frame-meta">
-                          <span>{formatFrameRange(bucket, frame)}</span>
-                          <span>{frame.minutes} min</span>
-                        </div>
-                        <div className="progress-track" role="presentation">
-                          <div className="progress-fill" style={{ width: `${width}%` }} />
-                        </div>
-                      </li>
-                    )
-                  })}
-                </ul>
+                {game.frameGroups.map((group) => (
+                  <section key={`${game.app_id}-${group.key}`} className="frame-group">
+                    {group.title ? (
+                      <div className="frame-group-header">
+                        <h4 className="frame-group-title">{group.title}</h4>
+                        {(() => {
+                          const periodTotal = getFramePeriodTotal(bucket, group.frames[0])
+                          return periodTotal ? (
+                            <span className="frame-group-meta">
+                              {periodTotal.label}: {formatMinutes(periodTotal.total)}
+                            </span>
+                          ) : null
+                        })()}
+                      </div>
+                    ) : null}
+                    <ul>
+                      {group.frames.map((frame, index) => {
+                        const width = Math.min(100, (frame.minutes / bucketMax) * 100)
+                        return (
+                          <li key={`${game.app_id}-${group.key}-${frame.from}-${index}`}>
+                            <div className="frame-meta">
+                              <span>{formatFrameItemLabel(bucket, frame)}</span>
+                              <span>{formatMinutes(frame.minutes)}</span>
+                            </div>
+                            <div className="progress-track" role="presentation">
+                              <div className="progress-fill" style={{ width: `${width}%` }} />
+                            </div>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </section>
+                ))}
               </article>
             ))}
+
+            {remainingBreakdownEntries > 0 ? (
+              <div className="pagination-controls">
+                <span className="pagination-status">
+                  Showing {visibleBreakdownEntries} of {totalBreakdownEntries} entries
+                </span>
+                <button type="button" onClick={onLoadMoreEntries}>
+                  Load {Math.min(BREAKDOWN_PAGE_SIZE, remainingBreakdownEntries)} more
+                </button>
+              </div>
+            ) : totalBreakdownEntries > 0 ? (
+              <p className="pagination-status">Showing all {totalBreakdownEntries} entries</p>
+            ) : null}
           </div>
         )}
       </section>
