@@ -1,0 +1,15 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./server/.env
+    environment:
+      DB_PATH: /app/data/steam-playtime.sqlite
+      PORT: "3000"
+    volumes:
+      - ./server/data:/app/data
+    restart: unless-stopped

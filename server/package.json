@@ -1,0 +1,33 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "db:migrate": "tsx src/scripts/migrate.ts",
+    "start": "tsx watch src/index.ts",
+    "start:prod": "tsx src/index.ts",
+    "start:container": "npm run db:migrate && npm run start:prod",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "description": "",
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "cron": "^4.4.0",
+    "dotenv": "^17.3.1",
+    "esbuild": "^0.27.4",
+    "express": "^5.2.1",
+    "tsx": "^4.21.0",
+    "typesafe-container": "^0.1.8",
+    "typescript": "^5.9.3",
+    "umzug": "^3.8.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.4.0"
+  }
+}

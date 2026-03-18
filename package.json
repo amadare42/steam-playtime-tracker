@@ -1,0 +1,15 @@
+{
+  "name": "steam-playtime-tracker",
+  "private": true,
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "build:client": "npm run -w client build",
+    "serve": "npm run -w client build && npm run -w server start:prod",
+    "dev:client": "npm run -w client dev",
+    "dev:server": "npm run -w server start"
+  }
+}
+
