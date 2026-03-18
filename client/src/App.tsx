@@ -4,12 +4,19 @@ import './App.css'
 
 type Bucket = 'hour' | 'day' | 'week'
 
+type PlatformPercentages = {
+  deck: number
+  windows: number
+  other: number
+}
+
 type GameFrame = {
   from: string
   to: string
   minutes: number
   day_total_minutes?: number
   week_total_minutes?: number
+  platform_percentages?: PlatformPercentages
 }
 
 type GameBreakdown = {
@@ -44,7 +51,7 @@ const BUCKET_MAX_MINUTES: Record<Bucket, number> = {
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim()
 const REQUEST_HISTORY_STORAGE_KEY = 'steam-playtime.request-history'
-const REQUEST_HISTORY_LIMIT = 20
+const REQUEST_HISTORY_LIMIT = 5
 const BREAKDOWN_PAGE_SIZE = 50
 
 function toApiUrl(path: string) {
@@ -253,6 +260,50 @@ function formatMinutes(minutes: number): string {
   return `${hours}h ${remainder}m`
 }
 
+function formatPercent(value: number): string {
+  const safe = Number.isFinite(value) ? value : 0
+  return `${safe.toFixed(1)}%`
+}
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0
+  }
+
+  return Math.max(0, Math.min(100, value))
+}
+
+function getPieChartSegments(platformPercentages?: PlatformPercentages): PlatformPercentages {
+  if (!platformPercentages) {
+    return { deck: 0, windows: 0, other: 100 }
+  }
+
+  const deck = clampPercent(platformPercentages.deck)
+  const windows = clampPercent(platformPercentages.windows)
+  const other = clampPercent(platformPercentages.other)
+  const total = deck + windows + other
+
+  if (total <= 0) {
+    return { deck: 0, windows: 0, other: 100 }
+  }
+
+  return {
+    deck: (deck / total) * 100,
+    windows: (windows / total) * 100,
+    other: (other / total) * 100,
+  }
+}
+
+function getPlatformHoverLabel(frame: GameFrame): string {
+  const platform = getPieChartSegments(frame.platform_percentages)
+  return [
+    `Total: ${formatMinutes(frame.minutes)}`,
+    `Deck: ${formatPercent(platform.deck)}`,
+    `Windows: ${formatPercent(platform.windows)}`,
+    `Other: ${formatPercent(platform.other)}`,
+  ].join('\n')
+}
+
 function getFramePeriodTotal(bucket: Bucket, frame: GameFrame): { label: string; shortLabel: string; total: number } | null {
   if (bucket === 'hour' && typeof frame.day_total_minutes === 'number') {
     return {
@@ -271,6 +322,44 @@ function getFramePeriodTotal(bucket: Bucket, frame: GameFrame): { label: string;
   }
 
   return null
+}
+
+function getHistoryGameLabel(entry: RequestHistoryEntry, resolvedGameName?: string): string {
+  if (entry.gameId === null) {
+    return 'All games'
+  }
+
+  return resolvedGameName ?? `Game #${entry.gameId}`
+}
+
+function getHistoryFrameLabel(entry: RequestHistoryEntry): string {
+  if (!entry.frameKey) {
+    return 'All frames'
+  }
+
+  const [from = '', to = ''] = entry.frameKey.split('|')
+  if (from && to) {
+    return formatFrameRange(entry.bucket, {
+      from,
+      to,
+      minutes: 0,
+    })
+  }
+
+  return entry.frameKey
+}
+
+function formatHistorySummary(entry: RequestHistoryEntry, resolvedGameName?: string): string {
+  return `${entry.bucket} · ${getHistoryGameLabel(entry, resolvedGameName)}`
+}
+
+function formatHistoryHoverDetails(entry: RequestHistoryEntry, resolvedGameName?: string): string {
+  return [
+    `User: ${entry.username}`,
+    `Period: ${entry.bucket}`,
+    `Game: ${getHistoryGameLabel(entry, resolvedGameName)}`,
+    `Frame: ${getHistoryFrameLabel(entry)}`,
+  ].join('\n')
 }
 
 async function apiRequest<T>(path: string): Promise<T> {
@@ -319,6 +408,10 @@ function App() {
   }, [selectedGameId, sortedGames])
 
   const availableFrames = selectedGame?.frames ?? []
+
+  const gameNameById = useMemo(() => {
+    return new Map(sortedGames.map((game) => [game.app_id, game.name]))
+  }, [sortedGames])
 
   const filteredGames = useMemo(() => {
     if (selectedGameId === null) {
@@ -655,6 +748,20 @@ function App() {
     })
   }
 
+  function removeHistoryEntry(entry: RequestHistoryEntry) {
+    setRequestHistory((previous) => {
+      const entryKey = toHistoryKey(entry)
+      const next = previous.filter((item) => toHistoryKey(item) !== entryKey)
+      writeRequestHistory(next)
+      return next
+    })
+  }
+
+  function clearHistory() {
+    setRequestHistory([])
+    writeRequestHistory([])
+  }
+
   function onLoadMoreEntries() {
     setVisibleEntryCount((current) => Math.min(current + BREAKDOWN_PAGE_SIZE, totalBreakdownEntries))
   }
@@ -738,18 +845,50 @@ function App() {
 
         {!!requestHistory.length && (
           <div className="history">
-            <h3>Recent requests</h3>
+            <div className="history-header">
+              <h3>Recent requests</h3>
+              <button
+                type="button"
+                className="history-clear"
+                onClick={clearHistory}
+                disabled={isLoadingBreakdown || isSyncingUser || isSyncingAll}
+              >
+                Clear all
+              </button>
+            </div>
             <ul>
               {requestHistory.slice(0, 5).map((entry) => (
                 <li key={`${entry.savedAt}-${entry.username}-${entry.bucket}`}>
-                  <button
-                    type="button"
-                    className="history-item"
-                    onClick={() => restoreFromHistory(entry)}
-                    disabled={isLoadingBreakdown || isSyncingUser || isSyncingAll}
-                  >
-                    {entry.username} / {entry.bucket}
-                  </button>
+                  {(() => {
+                    const resolvedGameName = entry.gameId === null
+                      ? undefined
+                      : gameNameById.get(entry.gameId)
+                    const hoverDetails = formatHistoryHoverDetails(entry, resolvedGameName)
+
+                    return (
+                  <div className="history-item-wrap">
+                    <button
+                      type="button"
+                      className="history-item history-restore"
+                      title={hoverDetails}
+                      onClick={() => restoreFromHistory(entry)}
+                      disabled={isLoadingBreakdown || isSyncingUser || isSyncingAll}
+                    >
+                      <span className="history-primary">{entry.username}</span>
+                      <span className="history-secondary">{formatHistorySummary(entry, resolvedGameName)}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="history-remove"
+                      onClick={() => removeHistoryEntry(entry)}
+                      disabled={isLoadingBreakdown || isSyncingUser || isSyncingAll}
+                      aria-label={`Remove request for ${entry.username} (${formatHistorySummary(entry, resolvedGameName)})`}
+                    >
+                      X
+                    </button>
+                  </div>
+                    )
+                  })()}
                 </li>
               ))}
             </ul>
@@ -807,11 +946,24 @@ function App() {
                     <ul>
                       {group.frames.map((frame, index) => {
                         const width = Math.min(100, (frame.minutes / bucketMax) * 100)
+                        const platform = getPieChartSegments(frame.platform_percentages)
+                        const deckEnd = platform.deck
+                        const windowsEnd = platform.deck + platform.windows
                         return (
                           <li key={`${game.app_id}-${group.key}-${frame.from}-${index}`}>
                             <div className="frame-meta">
                               <span>{formatFrameItemLabel(bucket, frame)}</span>
-                              <span>{formatMinutes(frame.minutes)}</span>
+                              <span className="frame-value-with-chart">
+                                <span>{formatMinutes(frame.minutes)}</span>
+                                <span
+                                  className="platform-pie"
+                                  title={getPlatformHoverLabel(frame)}
+                                  aria-label={getPlatformHoverLabel(frame)}
+                                  style={{
+                                    background: `conic-gradient(#10b981 0% ${deckEnd}%, #3b82f6 ${deckEnd}% ${windowsEnd}%, #9ca3af ${windowsEnd}% 100%)`,
+                                  }}
+                                />
+                              </span>
                             </div>
                             <div className="progress-track" role="presentation">
                               <div className="progress-fill" style={{ width: `${width}%` }} />

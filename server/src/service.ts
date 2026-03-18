@@ -27,6 +27,11 @@ type PlaytimeBreakdownByGameResult = {
             minutes: number;
             day_total_minutes?: number;
             week_total_minutes?: number;
+            platform_percentages: {
+                deck: number;
+                windows: number;
+                other: number;
+            };
         }>;
     }>;
 };
@@ -188,6 +193,7 @@ export class Service {
                 to: row.frame_to,
                 minutes: row.minutes,
                 ...periodTotalField,
+                platform_percentages: this.getPlatformPercentages(row),
             });
         }
 
@@ -255,5 +261,37 @@ export class Service {
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const day = String(date.getDate()).padStart(2, '0');
         return `${year}-${month}-${day}`;
+    }
+
+    private getPlatformPercentages(
+        row: Pick<PlaytimeGameFrameRow, 'minutes' | 'deck_minutes' | 'windows_minutes'>,
+    ): { deck: number; windows: number; other: number } {
+        const totalMinutes = Math.max(0, row.minutes);
+        if (totalMinutes <= 0) {
+            return { deck: 0, windows: 0, other: 0 };
+        }
+
+        const deckMinutes = Math.max(0, row.deck_minutes);
+        const windowsMinutes = Math.max(0, row.windows_minutes);
+        const knownMinutes = deckMinutes + windowsMinutes;
+
+        // Guard against source data where known platform deltas exceed total delta.
+        if (knownMinutes > totalMinutes) {
+            return {
+                deck: this.roundPercent((deckMinutes / knownMinutes) * 100),
+                windows: this.roundPercent((windowsMinutes / knownMinutes) * 100),
+                other: 0,
+            };
+        }
+
+        const deck = this.roundPercent((deckMinutes / totalMinutes) * 100);
+        const windows = this.roundPercent((windowsMinutes / totalMinutes) * 100);
+        const other = this.roundPercent(Math.max(0, 100 - deck - windows));
+
+        return { deck, windows, other };
+    }
+
+    private roundPercent(value: number): number {
+        return Math.round(value * 10) / 10;
     }
 }

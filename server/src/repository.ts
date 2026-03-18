@@ -43,6 +43,8 @@ export interface PlaytimeGameFrameRow {
     frame_from: string;
     frame_to: string;
     minutes: number;
+    deck_minutes: number;
+    windows_minutes: number;
 }
 
 export interface SyncRunInput {
@@ -222,7 +224,9 @@ export class Repository {
                 app_name,
                 ${bucketStartByType[bucket]} AS frame_from,
                 ${bucketEndByType[bucket]} AS frame_to,
-                SUM(playtime_delta_minutes) AS minutes
+                SUM(playtime_delta_minutes) AS minutes,
+                SUM(playtime_deck_delta_minutes) AS deck_minutes,
+                SUM(playtime_win_delta_minutes) AS windows_minutes
             FROM game_playtime_frame
             WHERE player_id = ?
             GROUP BY app_id, app_name, frame_from, frame_to

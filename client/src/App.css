@@ -28,6 +28,10 @@
   gap: 12px;
 }
 
+.controls-grid > * {
+  min-width: 0;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -49,6 +53,16 @@ select {
   padding: 8px 10px;
   background: var(--bg);
   color: var(--text-h);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+select {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 button {
@@ -67,33 +81,106 @@ button:disabled {
 
 .actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: 12px;
 }
 
+.actions > * {
+  min-width: 0;
+}
+
 .history {
-  margin-top: 14px;
+  margin-top: 10px;
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
 }
 
 .history h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
+  margin: 0;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text-h);
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .history ul {
-  margin: 0;
+  margin: 6px 0 0;
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 6px;
+  gap: 4px;
+}
+
+.history li {
+  display: block;
+}
+
+.history-item-wrap {
+  position: relative;
+  min-width: 0;
 }
 
 .history-item {
   width: 100%;
   text-align: left;
+  background: color-mix(in oklab, var(--bg) 94%, var(--social-bg));
+  border-color: color-mix(in oklab, var(--border) 80%, transparent);
+}
+
+.history-restore {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 26px 6px 8px;
+  min-width: 0;
+}
+
+.history-primary {
+  min-width: 0;
+  max-width: 45%;
+  font-size: 12px;
+  color: var(--text-h);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-secondary {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-clear,
+.history-remove {
+  background: transparent;
+  border-color: color-mix(in oklab, var(--border) 85%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+.history-remove {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  transform: translateY(-50%);
+  line-height: 1;
+  min-width: 16px;
+  height: 16px;
+  padding: 0;
 }
 
 .status,
@@ -208,6 +295,21 @@ button:disabled {
   justify-content: space-between;
   gap: 8px;
   font-size: 14px;
+}
+
+.frame-value-with-chart {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.platform-pie {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: conic-gradient(#9ca3af 0% 100%);
+  flex-shrink: 0;
 }
 
 .progress-track {
