@@ -1,15 +1,30 @@
 services:
-  app:
+  server:
     build:
       context: .
       dockerfile: server/Dockerfile
-    ports:
-      - "3000:3000"
+    container_name: steam-playtime-server
     env_file:
       - ./server/.env
     environment:
+      PORT: 3000
       DB_PATH: /app/data/steam-playtime.sqlite
-      PORT: "3000"
+      SYNC_ALL_ENABLED: "true"
+      SYNC_ALL_CRON: "0 * * * *"
+      SYNC_ALL_TIMEZONE: "UTC"
+      SYNC_ALL_TIMEOUT_SECONDS: "120"
     volumes:
-      - ./server/data:/app/data
+      - steam-playtime-data:/app/data
+    ports:
+      - "3100:3000"
     restart: unless-stopped
+    networks:
+      - nginx
+
+networks:
+  nginx:
+    external: true
+
+volumes:
+  steam-playtime-data:
+

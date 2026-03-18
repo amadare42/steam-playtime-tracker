@@ -15,7 +15,7 @@ COPY server/package*.json ./
 RUN npm ci --omit=dev
 
 COPY server ./
-COPY --from=client-build /workspace/server/public ./public
+COPY --from=client-build /workspace/client/dist ./public
 
 RUN chmod +x /app/docker/entrypoint.sh /app/docker/sync-all.sh
 
