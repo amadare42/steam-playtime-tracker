@@ -26,6 +26,8 @@ docker compose up --build
 
 This builds an image that includes the compiled client app in `server/public` and runs one server container for both API and UI.
 
+The server container also applies the `SYNC_ALL_*` environment values from `docker-compose.yml` to run `/sync/all` on a cron schedule.
+
 Stop:
 
 ```bash
