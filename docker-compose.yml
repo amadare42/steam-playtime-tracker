@@ -21,6 +21,20 @@ services:
     networks:
       - nginx
 
+  sqlite-web:
+    image: ghcr.io/coleifer/sqlite-web:latest
+    container_name: steam-playtime-sqlite-web
+    command: ["/data/steam-playtime.sqlite", "--host", "0.0.0.0", "--port", "8080"]
+    volumes:
+      - steam-playtime-data:/data:ro
+    ports:
+      - "3102:8080"
+    restart: unless-stopped
+    networks:
+      - nginx
+    depends_on:
+      - server
+
 networks:
   nginx:
     external: true
